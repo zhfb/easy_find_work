@@ -1,0 +1,29 @@
+# 管道规范状态
+# 参考 Career-Ops 的 states.yml 适配到 EFW
+# 每次投递必须处于以下 8 种状态之一
+
+states:
+  Evaluated:
+    aliases: [evaluada, 已评估]
+    description: 岗位已评估，待决定是否投递
+  Applied:
+    aliases: [aplicado, enviada, aplicada, sent, 已投递, 投递]
+    description: 简历已投递
+  Responded:
+    aliases: [respondido, 已回复]
+    description: HR 已回复/已查看
+  Interview:
+    aliases: [entrevista, 面试中, 面试]
+    description: 面试流程进行中
+  Offer:
+    aliases: [oferta, 已拿offer]
+    description: 已收到 Offer
+  Rejected:
+    aliases: [rechazado, rechazada, 已拒绝, 不合适]
+    description: 被公司拒绝
+  Discarded:
+    aliases: [descartado, descartada, cerrada, cancelada, 已放弃, 关闭]
+    description: 候选人主动放弃或岗位已关闭
+  SKIP:
+    aliases: [no_aplicar, no aplicar, skip, monitor, 跳过, 不投递]
+    description: 评分不足，跳过不投递
