@@ -10,9 +10,10 @@ from sqlmodel import Session, select
 
 from .db import init_db, get_session
 from . import db
-from .api import config as config_api, profile as profile_api, tasks as tasks_api, applications as applications_api
+from .api import config as config_api, profile as profile_api, tasks as tasks_api, applications as applications_api, chat as chat_api
 from .services.stats_service import get_today_stats
 from .services.application_service import list_applications
+from .services.chat_service import ChatService
 from .state import AppState
 
 # Agent 组件
@@ -115,6 +116,14 @@ async def lifespan(app: FastAPI):
         session_factory=lambda: Session(db.engine),
         app_state=app_state,
     )
+    # 构造对话式助手
+    chat_llm = _build_llm()
+    app.state.chat_service = ChatService(
+        llm=chat_llm,
+        task_service=app.state.task_service,
+        session_factory=lambda: Session(db.engine),
+        app_state=app_state,
+    )
     # 构造跟进服务并启动后台循环
     followup_service = _build_followup_service()
     app.state.followup_service = followup_service
@@ -135,6 +144,7 @@ app.include_router(config_api.router, prefix="/api")
 app.include_router(profile_api.router, prefix="/api")
 app.include_router(tasks_api.router, prefix="/api")
 app.include_router(applications_api.router, prefix="/api")
+app.include_router(chat_api.router, prefix="/api")
 
 
 @app.get("/")
@@ -176,3 +186,9 @@ def semi_queue(request: Request, session: Session = Depends(get_session)):
         request, "semi_queue.html",
         {"applications": enriched},
     )
+
+
+@app.get("/chat")
+def chat_page(request: Request):
+    """对话式助手页面。"""
+    return templates.TemplateResponse(request, "chat.html", {})
