@@ -1,22 +1,164 @@
 {% extends "base.html" %}
 {% block title %}看板 - EFW-AI{% endblock %}
 {% block content %}
+
+<!-- 今日统计 -->
 <div class="card">
   <h2 style="margin-bottom:12px;">今日投递统计（{{ today }}）</h2>
   <p style="font-size:28px;font-weight:700;color:#1a1a2e;">{{ total }} <span style="font-size:14px;font-weight:400;color:#888;">条投递</span></p>
-</div>
-<div class="card">
-  <h3 style="margin-bottom:12px;">按状态分布</h3>
   {% if stats %}
-  <ul style="list-style:none;">
+  <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;">
     {% for status, count in stats.items() %}
-    <li style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;">
-      <span>{{ status }}</span><span style="font-weight:600;">{{ count }}</span>
-    </li>
+    <span class="badge badge-{{ status }}" style="font-size:13px;padding:4px 12px;">{{ status }}: {{ count }}</span>
     {% endfor %}
-  </ul>
-  {% else %}
-  <p style="color:#888;">今日暂无投递记录</p>
+  </div>
   {% endif %}
 </div>
+
+<!-- 成本统计 -->
+<div class="card">
+  <h3 style="margin-bottom:12px;">AI 调用成本估算</h3>
+  <div style="display:flex;gap:24px;flex-wrap:wrap;">
+    <div>
+      <p style="color:#888;font-size:13px;">总 Token</p>
+      <p style="font-size:22px;font-weight:700;">{{ cost.total_tokens }}</p>
+    </div>
+    <div>
+      <p style="color:#888;font-size:13px;">Prompt Token</p>
+      <p style="font-size:22px;font-weight:700;">{{ cost.total_prompt_tokens }}</p>
+    </div>
+    <div>
+      <p style="color:#888;font-size:13px;">Completion Token</p>
+      <p style="font-size:22px;font-weight:700;">{{ cost.total_completion_tokens }}</p>
+    </div>
+    <div>
+      <p style="color:#888;font-size:13px;">单价 (元/千token)</p>
+      <p style="font-size:22px;font-weight:700;">{{ cost.price_per_1k }}</p>
+    </div>
+    <div>
+      <p style="color:#888;font-size:13px;">估算成本 (元)</p>
+      <p style="font-size:22px;font-weight:700;color:#dc2626;">{{ cost.estimated_cost }}</p>
+    </div>
+  </div>
+</div>
+
+<!-- 任务列表 -->
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h3>任务列表</h3>
+    <button class="btn btn-primary btn-sm" onclick="document.getElementById('newTaskForm').style.display='block'">+ 新建任务</button>
+  </div>
+
+  <!-- 新建任务表单 -->
+  <div id="newTaskForm" style="display:none;background:#f9fafb;padding:16px;border-radius:8px;margin-bottom:16px;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;">
+      <input id="nt-name" placeholder="任务名称" style="padding:8px;border:1px solid #ddd;border-radius:6px;">
+      <input id="nt-keywords" placeholder='关键词 JSON，如 ["python"]' style="padding:8px;border:1px solid #ddd;border-radius:6px;">
+      <input id="nt-city" placeholder="城市" style="padding:8px;border:1px solid #ddd;border-radius:6px;">
+      <select id="nt-mode" style="padding:8px;border:1px solid #ddd;border-radius:6px;">
+        <option value="auto">全自动</option>
+        <option value="semi">半自动</option>
+      </select>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px;">
+      <button class="btn btn-primary btn-sm" onclick="createTask(this)">创建</button>
+      <button class="btn btn-sm" onclick="document.getElementById('newTaskForm').style.display='none'">取消</button>
+    </div>
+  </div>
+
+  {% if tasks %}
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <thead>
+        <tr style="border-bottom:2px solid #eee;text-align:left;color:#666;">
+          <th style="padding:10px 8px;">ID</th>
+          <th style="padding:10px 8px;">名称</th>
+          <th style="padding:10px 8px;">状态</th>
+          <th style="padding:10px 8px;">模式</th>
+          <th style="padding:10px 8px;">进度</th>
+          <th style="padding:10px 8px;">投递数</th>
+          <th style="padding:10px 8px;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tasks %}
+        <tr style="border-bottom:1px solid #f0f0f0;">
+          <td style="padding:10px 8px;">{{ t.id }}</td>
+          <td style="padding:10px 8px;">
+            <a href="/tasks/{{ t.id }}" style="color:#1a1a2e;text-decoration:none;font-weight:500;">{{ t.name or '(未命名)' }}</a>
+          </td>
+          <td style="padding:10px 8px;"><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
+          <td style="padding:10px 8px;">{{ '全自动' if t.mode == 'auto' else '半自动' }}</td>
+          <td style="padding:10px 8px;font-size:13px;color:#666;">
+            {% if t.last_job_id %}游标 #{{ t.last_job_id }}{% else %}未开始{% endif %}
+          </td>
+          <td style="padding:10px 8px;">
+            <span title="投递 {{ t.app_deliver }} / 跳过 {{ t.app_skip }}">{{ t.app_total }}</span>
+          </td>
+          <td style="padding:10px 8px;">
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">
+              {% if t.status in ('pending', 'paused', 'stopped') %}
+              <button class="btn btn-success btn-sm" onclick="taskAction({{ t.id }}, 'start', this)">启动</button>
+              {% endif %}
+              {% if t.status == 'running' %}
+              <button class="btn btn-warning btn-sm" onclick="taskAction({{ t.id }}, 'pause', this)">暂停</button>
+              {% endif %}
+              {% if t.status == 'paused' %}
+              <button class="btn btn-success btn-sm" onclick="taskAction({{ t.id }}, 'resume', this)">继续</button>
+              {% endif %}
+              {% if t.status == 'interrupted' %}
+              <button class="btn btn-warning btn-sm" onclick="taskAction({{ t.id }}, 'resume-after-crash', this)">崩溃续跑</button>
+              {% endif %}
+              {% if t.status in ('running', 'paused') %}
+              <button class="btn btn-danger btn-sm" onclick="taskAction({{ t.id }}, 'stop', this)">停止</button>
+              {% endif %}
+              <a href="/tasks/{{ t.id }}" class="btn btn-sm">详情</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div style="text-align:center;padding:40px 0;color:#9ca3af;">
+    <p>暂无任务，点击上方"新建任务"开始</p>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+async function taskAction(taskId, action, btn) {
+  const data = await apiPost('/api/tasks/' + taskId + '/' + action, btn);
+  if (data) setTimeout(() => location.reload(), 500);
+}
+
+async function createTask(btn) {
+  const name = document.getElementById('nt-name').value.trim();
+  const keywords = document.getElementById('nt-keywords').value.trim() || '[]';
+  const city = document.getElementById('nt-city').value.trim();
+  const mode = document.getElementById('nt-mode').value;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 创建中...';
+  try {
+    const resp = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, keywords, city, mode}),
+    });
+    if (resp.ok) {
+      showToast('任务创建成功', 'success');
+      setTimeout(() => location.reload(), 500);
+    } else {
+      const err = await resp.json();
+      showToast(err.detail || '创建失败', 'error');
+    }
+  } catch (e) {
+    showToast('网络错误: ' + e, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '创建';
+  }
+}
+</script>
 {% endblock %}

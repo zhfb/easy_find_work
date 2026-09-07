@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}投递记录 - EFW-AI{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2 style="margin-bottom:16px;">投递记录</h2>
+
+  <!-- 筛选 -->
+  <form method="get" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+    <select name="status" style="padding:8px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+      <option value="">全部状态</option>
+      {% for s in ['skip', 'pending_manual', 'applied', 'responded', 'interview', 'offer', 'rejected', 'withdrawn'] %}
+      <option value="{{ s }}" {% if current_status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <select name="task_id" style="padding:8px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+      <option value="">全部任务</option>
+      {% for t in tasks %}
+      <option value="{{ t.id }}" {% if current_task == t.id %}selected{% endif %}>{{ t.name or '任务#' + t.id|string }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-primary btn-sm">筛选</button>
+    <a href="/applications" class="btn btn-sm">重置</a>
+  </form>
+
+  <!-- 状态分布 -->
+  {% if status_dist %}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+    {% for status, count in status_dist.items() %}
+    <a href="/applications?status={{ status }}" class="badge badge-{{ status }}" style="text-decoration:none;font-size:13px;padding:4px 12px;">{{ status }}: {{ count }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- 列表 -->
+  {% if applications %}
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <thead>
+        <tr style="border-bottom:2px solid #eee;text-align:left;color:#666;">
+          <th style="padding:10px 8px;">ID</th>
+          <th style="padding:10px 8px;">岗位</th>
+          <th style="padding:10px 8px;">公司</th>
+          <th style="padding:10px 8px;">薪资</th>
+          <th style="padding:10px 8px;">决策</th>
+          <th style="padding:10px 8px;">匹配分</th>
+          <th style="padding:10px 8px;">状态</th>
+          <th style="padding:10px 8px;">投递时间</th>
+          <th style="padding:10px 8px;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in applications %}
+        <tr style="border-bottom:1px solid #f0f0f0;">
+          <td style="padding:10px 8px;">{{ a.id }}</td>
+          <td style="padding:10px 8px;">{{ a.job_title or '-' }}</td>
+          <td style="padding:10px 8px;color:#666;">{{ a.company or '-' }}</td>
+          <td style="padding:10px 8px;font-size:13px;">{{ a.salary_text or '-' }}</td>
+          <td style="padding:10px 8px;">
+            <span class="badge {% if a.decision == 'deliver' %}badge-finished{% elif a.decision == 'skip' %}badge-stopped{% else %}badge-pending{% endif %}">{{ a.decision }}</span>
+          </td>
+          <td style="padding:10px 8px;">{{ a.match_score if a.match_score is not none else '-' }}</td>
+          <td style="padding:10px 8px;"><span class="badge badge-{{ a.status }}">{{ a.status }}</span></td>
+          <td style="padding:10px 8px;font-size:13px;color:#666;">{{ a.applied_at or '-' }}</td>
+          <td style="padding:10px 8px;"><a href="/applications/{{ a.id }}" class="btn btn-sm">详情</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div style="text-align:center;padding:40px 0;color:#9ca3af;">
+    <p>暂无投递记录</p>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

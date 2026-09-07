@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}{{ task.name }} - 任务详情 - EFW-AI{% endblock %}
+{% block head %}
+<style>
+  .progress-log { background: #1a1a2e; color: #e0e0e0; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 13px; max-height: 300px; overflow-y: auto; line-height: 1.6; }
+  .progress-log .ev-paused { color: #f59e0b; }
+  .progress-log .ev-stopped { color: #ef4444; }
+  .progress-log .ev-finished { color: #10b981; }
+  .progress-log .ev-error { color: #ef4444; }
+  .progress-log .ev-daily_limit_reached { color: #f59e0b; }
+</style>
+{% endblock %}
+{% block content %}
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;">
+    <div>
+      <h2 style="margin-bottom:8px;">{{ task.name or '(未命名任务)' }}</h2>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+        <span class="badge badge-{{ task.status }}">{{ task.status }}</span>
+        <span style="color:#888;font-size:13px;">模式: {{ '全自动' if task.mode == 'auto' else '半自动' }}</span>
+        <span style="color:#888;font-size:13px;">城市: {{ task.city or '-' }}</span>
+        <span style="color:#888;font-size:13px;">日限额: {{ task.daily_limit }}</span>
+        <span style="color:#888;font-size:13px;">匹配阈值: {{ task.match_threshold }}</span>
+        {% if task.last_job_id %}
+        <span style="color:#888;font-size:13px;">游标: #{{ task.last_job_id }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      {% if task.status in ('pending', 'paused', 'stopped') %}
+      <button class="btn btn-success btn-sm" onclick="taskAction('start', this)">启动</button>
+      {% endif %}
+      {% if task.status == 'running' %}
+      <button class="btn btn-warning btn-sm" onclick="taskAction('pause', this)">暂停</button>
+      {% endif %}
+      {% if task.status == 'paused' %}
+      <button class="btn btn-success btn-sm" onclick="taskAction('resume', this)">继续</button>
+      {% endif %}
+      {% if task.status == 'interrupted' %}
+      <button class="btn btn-warning btn-sm" onclick="taskAction('resume-after-crash', this)">崩溃续跑</button>
+      {% endif %}
+      {% if task.status in ('running', 'paused') %}
+      <button class="btn btn-danger btn-sm" onclick="taskAction('stop', this)">停止</button>
+      {% endif %}
+      <a href="/" class="btn btn-sm">返回看板</a>
+    </div>
+  </div>
+</div>
+
+<!-- SSE 实时进度 -->
+<div class="card">
+  <h3 style="margin-bottom:12px;">运行进度</h3>
+  <div class="progress-log" id="progressLog">
+    <div>等待事件...</div>
+  </div>
+</div>
+
+<!-- 岗位评估列表 -->
+<div class="card">
+  <h3 style="margin-bottom:12px;">岗位评估记录（{{ applications|length }}）</h3>
+  {% if applications %}
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <thead>
+        <tr style="border-bottom:2px solid #eee;text-align:left;color:#666;">
+          <th style="padding:10px 8px;">岗位</th>
+          <th style="padding:10px 8px;">公司</th>
+          <th style="padding:10px 8px;">决策</th>
+          <th style="padding:10px 8px;">匹配分</th>
+          <th style="padding:10px 8px;">状态</th>
+          <th style="padding:10px 8px;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in applications %}
+        <tr style="border-bottom:1px solid #f0f0f0;">
+          <td style="padding:10px 8px;">{{ a.job_title or '-' }}</td>
+          <td style="padding:10px 8px;color:#666;">{{ a.company or '-' }}</td>
+          <td style="padding:10px 8px;">
+            <span class="badge {% if a.decision == 'deliver' %}badge-finished{% elif a.decision == 'skip' %}badge-stopped{% else %}badge-pending{% endif %}">{{ a.decision }}</span>
+          </td>
+          <td style="padding:10px 8px;">{{ a.match_score if a.match_score is not none else '-' }}</td>
+          <td style="padding:10px 8px;"><span class="badge badge-{{ a.status }}">{{ a.status }}</span></td>
+          <td style="padding:10px 8px;"><a href="/applications/{{ a.id }}" class="btn btn-sm">详情</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:#888;text-align:center;padding:20px 0;">暂无评估记录</p>
+  {% endif %}
+</div>
+
+<script>
+const taskId = {{ task.id }};
+
+async function taskAction(action, btn) {
+  const data = await apiPost('/api/tasks/' + taskId + '/' + action, btn);
+  if (data) setTimeout(() => location.reload(), 500);
+}
+
+// SSE 实时进度
+const log = document.getElementById('progressLog');
+function appendLog(text, cls) {
+  const div = document.createElement('div');
+  if (cls) div.className = 'ev-' + cls;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+try {
+  const es = new EventSource('/api/tasks/' + taskId + '/events');
+  es.onmessage = (e) => {
+    try {
+      const ev = JSON.parse(e.data);
+      const time = new Date().toLocaleTimeString();
+      if (ev.type === 'connected') {
+        appendLog('[' + time + '] 已连接进度流');
+      } else if (ev.type === 'job_processed') {
+        appendLog('[' + time + '] ' + ev.message);
+      } else {
+        appendLog('[' + time + '] [' + ev.type + '] ' + (ev.message || ''), ev.type);
+      }
+    } catch (err) { console.warn('SSE parse error', err); }
+  };
+  es.onerror = () => { appendLog('连接中断，正在重连...', 'error'); };
+} catch (e) {
+  appendLog('当前浏览器不支持 SSE，无法显示实时进度', 'error');
+}
+</script>
+{% endblock %}

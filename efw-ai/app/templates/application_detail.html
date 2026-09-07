@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}投递详情 #{{ app.id }} - EFW-AI{% endblock %}
+{% block content %}
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;">
+    <div>
+      <h2 style="margin-bottom:8px;">{{ job.title if job else '岗位 #' + app.job_id|string }}</h2>
+      <p style="color:#666;margin-bottom:8px;">
+        {{ job.company if job else '-' }}
+        {% if job and job.salary_text %} · {{ job.salary_text }}{% endif %}
+        {% if job and job.city %} · {{ job.city }}{% endif %}
+      </p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <span class="badge {% if app.decision == 'deliver' %}badge-finished{% elif app.decision == 'skip' %}badge-stopped{% else %}badge-pending{% endif %}">决策: {{ app.decision }}</span>
+        <span class="badge badge-{{ app.status }}">状态: {{ app.status }}</span>
+        {% if app.match_score is not none %}
+        <span style="color:#888;font-size:13px;">匹配分: {{ app.match_score }}</span>
+        {% endif %}
+        {% if task %}
+        <a href="/tasks/{{ task.id }}" style="color:#1a1a2e;font-size:13px;">所属任务: {{ task.name or '#' + task.id|string }}</a>
+        {% endif %}
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <a href="/applications" class="btn btn-sm">返回列表</a>
+      {% if job and job.job_url %}
+      <a href="{{ job.job_url }}" target="_blank" class="btn btn-sm">查看原岗位</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- LLM 评估理由 -->
+<div class="card">
+  <h3 style="margin-bottom:12px;">AI 评估理由</h3>
+  {% if app.llm_reason %}
+  <div style="background:#f9fafb;border-radius:6px;padding:14px;font-size:14px;line-height:1.7;white-space:pre-wrap;">{{ app.llm_reason }}</div>
+  {% else %}
+  <p style="color:#888;">无评估理由（规则预筛跳过）</p>
+  {% endif %}
+</div>
+
+<!-- 打招呼文案 -->
+<div class="card">
+  <h3 style="margin-bottom:12px;">打招呼文案</h3>
+  {% if app.message %}
+  <div style="background:#f0f9ff;border-radius:6px;padding:14px;font-size:14px;line-height:1.7;white-space:pre-wrap;" id="msgText">{{ app.message }}</div>
+  <div style="margin-top:10px;display:flex;gap:8px;">
+    <button class="btn btn-sm" onclick="copyMessage()">复制文案</button>
+    <button class="btn btn-sm" onclick="regenerateMsg(this)">重新生成</button>
+  </div>
+  {% else %}
+  <p style="color:#888;">无文案（该岗位被跳过或未生成）</p>
+  {% endif %}
+</div>
+
+<!-- 状态推进 -->
+<div class="card">
+  <h3 style="margin-bottom:12px;">状态推进</h3>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;">
+    {% for s in ['pending_manual', 'applied', 'responded', 'interview', 'offer', 'rejected', 'withdrawn'] %}
+    <button class="btn btn-sm {% if app.status == s %}btn-primary{% endif %}" onclick="updateStatus('{{ s }}', this)">{{ s }}</button>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- 事件时间线 -->
+<div class="card">
+  <h3 style="margin-bottom:12px;">事件时间线</h3>
+  {% if events %}
+  <div style="border-left:2px solid #e5e7eb;padding-left:16px;">
+    {% for ev in events %}
+    <div style="margin-bottom:14px;position:relative;">
+      <div style="position:absolute;left:-22px;top:4px;width:10px;height:10px;border-radius:50%;background:#1a1a2e;"></div>
+      <p style="font-size:13px;color:#888;">{{ ev.created_at }}</p>
+      <p style="font-size:14px;font-weight:500;">{{ ev.event_type }}</p>
+      {% if ev.detail %}
+      <p style="font-size:13px;color:#666;margin-top:2px;white-space:pre-wrap;">{{ ev.detail }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p style="color:#888;">暂无事件记录</p>
+  {% endif %}
+</div>
+
+<script>
+const appId = {{ app.id }};
+
+function copyMessage() {
+  const text = document.getElementById('msgText').innerText;
+  navigator.clipboard.writeText(text).then(() => showToast('文案已复制', 'success')).catch(() => showToast('复制失败', 'error'));
+}
+
+async function regenerateMsg(btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 生成中...';
+  try {
+    const resp = await fetch('/api/applications/' + appId + '/regenerate-message', {method: 'POST'});
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.messages && data.messages.length > 0) {
+        document.getElementById('msgText').textContent = data.messages[0];
+        showToast('文案已重新生成', 'success');
+      } else {
+        showToast('未生成文案（可能缺少 profile）', 'error');
+      }
+    } else {
+      showToast('生成失败', 'error');
+    }
+  } catch (e) {
+    showToast('网络错误: ' + e, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '重新生成';
+  }
+}
+
+async function updateStatus(status, btn) {
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/applications/' + appId + '/status', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({status: status, detail: '页面手动更新状态'}),
+    });
+    if (resp.ok) {
+      showToast('状态已更新为 ' + status, 'success');
+      setTimeout(() => location.reload(), 500);
+    } else {
+      const err = await resp.json();
+      showToast(err.detail || '更新失败', 'error');
+    }
+  } catch (e) {
+    showToast('网络错误: ' + e, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+{% endblock %}
