@@ -64,6 +64,14 @@ class BrowserSessionManager:
                 return self._state
             if self._loop_task is not None and not self._loop_task.done():
                 self._loop_task.cancel()
+            # 已有旧浏览器实例（已登录/过期/超时后再次发起）：先关闭，避免重复实例与窗口竞争
+            if self._browser is not None:
+                try:
+                    await self._browser.stop()
+                except Exception:
+                    logger.exception("browser stop before restart failed")
+                self._browser = None
+                self._page = None
             self._state = "starting"
             self._started_at = time.strftime("%Y-%m-%d %H:%M:%S")
             self._detail = ""

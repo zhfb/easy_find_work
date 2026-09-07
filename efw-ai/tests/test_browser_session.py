@@ -147,3 +147,31 @@ async def test_partial_start_failure_stops_browser():
     assert await bm.start_login() == "error"
     assert b.started is True
     assert b.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_restart_login_stops_previous_browser():
+    """回归：已登录后再次点「去登录」，必须先关闭旧浏览器实例再启动新的。"""
+    mgr = BrowserSessionManager(browser_factory=lambda: _fake())
+    # 第一次登录
+    state = await mgr.start_login()
+    assert state == "waiting_login"
+    # 用户已登录（直接驱动状态）
+    mgr._state = "logged_in"
+    mgr._stop_loop()
+    # 第二次点击「去登录」
+    mgr._browser.stopped = False  # 重置标记
+    state2 = await mgr.start_login()
+    assert state2 == "waiting_login"
+    assert first_browser.stopped is True, "旧浏览器必须在重启登录前关闭"
+
+
+first_browser = None
+
+
+async def _fake():
+    global first_browser
+    b = FakeBrowser([])
+    if first_browser is None:
+        first_browser = b
+    return b
