@@ -46,6 +46,14 @@ curl -X PUT http://127.0.0.1:8888/api/config \
 
 ## 启动
 
+前端需先构建（产物由 FastAPI 静态托管，单端口）：
+
+```bash
+cd frontend && npm install && npm run build && cd ..
+```
+
+启动后端：
+
 ```bash
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8888
 ```
@@ -57,6 +65,29 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8888
 - 智能助手：`http://127.0.0.1:8888/chat`
 - 配置：`http://127.0.0.1:8888/config`
 
+若前端未构建，访问根路径会返回 503 提示。
+
+## 前端（SPA）
+
+前端为 Vue 3 + Vite，位于 `frontend/`。构建产物由 FastAPI 静态托管（单端口 8888）。
+
+首次构建：
+```bash
+cd frontend && npm install && npm run build
+```
+
+日常运行（后端已托管 dist）：
+```bash
+uv run uvicorn app.main:app
+# 浏览器打开 http://127.0.0.1:8888
+```
+
+前端开发（热更新）：
+```bash
+cd frontend && npm run dev
+# Vite dev server 5173，/api 自动代理到 8888
+```
+
 ## 测试
 
 ```bash
@@ -67,7 +98,7 @@ uv run pytest -v
 
 ```
 app/
-├── main.py              # FastAPI 入口、页面路由、lifespan、崩溃恢复
+├── main.py              # FastAPI 入口、API 路由、SPA fallback、lifespan、崩溃恢复
 ├── db.py                # 数据库引擎与会话
 ├── models.py            # 9 张表的 SQLModel 定义
 ├── schemas.py           # Pydantic 请求模型
@@ -98,15 +129,10 @@ app/
 ├── worker/              # 执行层
 │   ├── browser.py       # 浏览器管理
 │   └── boss_client.py   # Boss 直聘客户端
-└── templates/           # Jinja2 模板
-    ├── base.html
-    ├── dashboard.html
-    ├── task_detail.html
-    ├── applications.html
-    ├── application_detail.html
-    ├── semi_queue.html
-    ├── chat.html
-    └── config.html
+frontend/                # Vue 3 + Vite SPA 前端
+├── src/                 # 页面组件、路由、API 客户端
+├── dist/                # 构建产物（gitignore，由 FastAPI 托管）
+└── package.json
 ```
 
 ## API 概览

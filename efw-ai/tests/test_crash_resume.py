@@ -157,32 +157,28 @@ def test_smoke_config_endpoint(client):
     assert isinstance(r.json(), dict)
 
 
-def test_smoke_semi_queue_page(client):
-    r = client.get("/semi-queue")
+def test_smoke_semi_queue_endpoint(client):
+    r = client.get("/api/applications", params={"status": "pending_manual"})
     assert r.status_code == 200
+    assert "applications" in r.json()
 
 
-def test_smoke_task_detail_page(client):
+def test_smoke_task_detail_endpoint(client):
     task = client.post("/api/tasks", json={"name": "详情页任务"}).json()
-    r = client.get(f"/tasks/{task['id']}")
+    r = client.get(f"/api/tasks/{task['id']}")
     assert r.status_code == 200
-    assert "详情页任务" in r.text
+    assert r.json()["name"] == "详情页任务"
 
 
-def test_smoke_applications_page(client):
-    r = client.get("/applications")
-    assert r.status_code == 200
-
-
-def test_smoke_application_detail_page_404(client):
-    r = client.get("/applications/99999")
+def test_smoke_application_detail_endpoint_404(client):
+    r = client.get("/api/applications/99999")
     assert r.status_code == 404
 
 
 # ---------- 成本统计 ----------
 
 def test_cost_stats_accumulated_tokens(client):
-    """dashboard 应显示 ai_tokens_{task_id} 的累计 token 与估算成本。"""
+    """dashboard API 应返回 ai_tokens_{task_id} 的累计 token 与估算成本。"""
     from app import db as db_module
     with Session(db_module.engine) as s:
         s.add(ConfigItem(key="ai_tokens_1", value=json.dumps({
@@ -191,14 +187,17 @@ def test_cost_stats_accumulated_tokens(client):
         s.add(ConfigItem(key="price_per_1k", value="0.01"))
         s.commit()
 
-    r = client.get("/")
+    r = client.get("/api/dashboard/today")
     assert r.status_code == 200
-    # 总成本 = (1000 + 500) / 1000 * 0.01 = 0.015
-    assert "0.015" in r.text or "1500" in r.text
+    data = r.json()
+    # 总 token = 1000 + 500 = 1500
+    assert data["total_tokens"] == 1500
+    # 总成本 = 1500 / 1000 * 0.01 = 0.015
+    assert data["total_cost"] == 0.015
 
 
 def test_cost_stats_default_price_zero(client):
-    """未配置 price_per_1k 时成本为 0，但 token 数仍显示。"""
+    """未配置 price_per_1k 时成本为 0，但 token 数仍返回。"""
     from app import db as db_module
     with Session(db_module.engine) as s:
         s.add(ConfigItem(key="ai_tokens_2", value=json.dumps({
@@ -206,6 +205,6 @@ def test_cost_stats_default_price_zero(client):
         })))
         s.commit()
 
-    r = client.get("/")
+    r = client.get("/api/dashboard/today")
     assert r.status_code == 200
-    assert "300" in r.text  # total tokens
+    assert r.json()["total_tokens"] == 300

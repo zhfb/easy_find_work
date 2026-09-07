@@ -182,27 +182,29 @@ def test_regenerate_message_not_found(client):
     assert r.status_code == 404
 
 
-# ---------- GET /semi-queue 页面 ----------
+# ---------- GET /api/applications?status=pending_manual（半自动清单） ----------
 
 def test_semi_queue_page_lists_pending_manual(client):
     _seed(client, status="pending_manual", title="待手动投递岗位", company="手动公司")
-    r = client.get("/semi-queue")
+    r = client.get("/api/applications", params={"status": "pending_manual"})
     assert r.status_code == 200
-    assert "待手动投递岗位" in r.text
-    assert "手动公司" in r.text
+    apps = r.json()["applications"]
+    assert any(a["job_title"] == "待手动投递岗位" for a in apps)
+    assert any(a["company"] == "手动公司" for a in apps)
 
 
 def test_semi_queue_page_excludes_applied(client):
     _seed(client, status="applied", title="已投递岗位", company="已投公司")
-    r = client.get("/semi-queue")
+    r = client.get("/api/applications", params={"status": "pending_manual"})
     assert r.status_code == 200
-    assert "已投递岗位" not in r.text
+    apps = r.json()["applications"]
+    assert all(a["job_title"] != "已投递岗位" for a in apps)
 
 
 def test_semi_queue_page_empty(client):
-    r = client.get("/semi-queue")
+    r = client.get("/api/applications", params={"status": "pending_manual"})
     assert r.status_code == 200
-    assert "半自动" in r.text or "待投递" in r.text or "暂无" in r.text
+    assert r.json()["applications"] == []
 
 
 # ---------- TaskService 自动投递单元测试 ----------
