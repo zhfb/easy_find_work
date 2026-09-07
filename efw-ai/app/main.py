@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -20,7 +22,13 @@ from .agent.decider import Decider
 from .agent.writer import Writer
 from .agent.llm import LlmClient
 from .agent.orchestrator import Orchestrator
+from .agent.followup import FollowUpAnalyzer
 from .services.task_service import TaskService
+from .services.followup_service import FollowupService
+from .services.risk_controller import RiskController
+from .worker.boss_client import BossClient
+
+logger = logging.getLogger(__name__)
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -47,6 +55,49 @@ def _build_orchestrator() -> Orchestrator:
     )
 
 
+def _build_followup_service() -> FollowupService:
+    """构造跟进服务（骨架阶段浏览器 page 为 None，run_once 会自动跳过）。"""
+    llm = _build_llm()
+    analyzer = FollowUpAnalyzer(llm=llm)
+    boss_client = BossClient()
+    risk = RiskController(session=None)  # 骨架阶段无浏览器会话
+    return FollowupService(
+        analyzer=analyzer,
+        boss_client=boss_client,
+        risk=risk,
+        session_factory=lambda: Session(db.engine),
+        page=None,
+    )
+
+
+def _get_follow_up_minutes() -> int:
+    """从 config 表读取跟进间隔（分钟），默认 10 分钟。"""
+    from .services.config_service import get_config
+    with Session(db.engine) as session:
+        raw = get_config(session, "follow_up_minutes")
+    try:
+        val = int(raw) if raw is not None else 10
+        return max(1, val)  # 最小 1 分钟，避免配置错误导致忙等
+    except (ValueError, TypeError):
+        return 10
+
+
+async def _followup_loop(service: FollowupService) -> None:
+    """后台跟进循环：每隔 follow_up_minutes 执行一次 run_once。"""
+    while True:
+        try:
+            count = await service.run_once()
+            if count:
+                logger.info("跟进循环完成，本次推进 %d 条申请", count)
+        except asyncio.CancelledError:
+            logger.info("跟进循环已取消")
+            raise
+        except Exception as e:
+            logger.exception("跟进循环异常: %s", e)
+        interval = _get_follow_up_minutes() * 60
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -63,7 +114,19 @@ async def lifespan(app: FastAPI):
         session_factory=lambda: Session(db.engine),
         app_state=app_state,
     )
-    yield
+    # 构造跟进服务并启动后台循环
+    followup_service = _build_followup_service()
+    app.state.followup_service = followup_service
+    followup_task = asyncio.create_task(_followup_loop(followup_service))
+    app.state.followup_task = followup_task
+    try:
+        yield
+    finally:
+        followup_task.cancel()
+        try:
+            await followup_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 app = FastAPI(lifespan=lifespan)
