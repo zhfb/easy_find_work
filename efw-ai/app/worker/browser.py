@@ -94,47 +94,32 @@ class BrowserManager:
     # 登录态 / 心跳
     # ------------------------------------------------------------------
     async def login_status(self, page) -> str:
-        """Four-signal login判定: A 强否定; B DOM / C cookie / D 接口 加权 >=2 已登录."""
+        """非导航登录判定（轮询安全）：绝不 goto，避免打断用户登录窗口。
+
+        - A 强否定: 当前 URL 为 passport 域名或 /login 路径 → logged_out
+        - C 强肯定: 登录态 cookie（wt2/__zp_stoken__/last_login_phone）存在 → logged_in
+        - B 强肯定: 当前页面 DOM 含「退出登录」 → logged_in
+        - 其余 → unknown（保持等待，不打扰登录过程）
+        """
         try:
-            await page.goto(LOGIN_CHECK_URL, wait_until="domcontentloaded", timeout=15000)
-        except Exception:
-            logger.exception("login_status goto failed")
-            return "unknown"
-        parsed = urlparse(page.url)
-        if "passport" in parsed.netloc or parsed.path.startswith("/login"):
-            return "logged_out"
-        score = 0
-        try:
-            body = await page.inner_text("body")
-            if "退出登录" in body:
-                score += 1
+            parsed = urlparse(page.url)
+            if "passport" in parsed.netloc or parsed.path.startswith("/login"):
+                return "logged_out"
         except Exception:
             pass
         try:
             cookies = await page.context.cookies()
             names = {c["name"] for c in cookies}
             if names & set(LOGIN_COOKIE_NAMES):
-                score += 1
+                return "logged_in"
         except Exception:
             pass
-        if self.auth_probe_url:
-            try:
-                resp = await page.request.get(self.auth_probe_url, timeout=8000)
-                if resp.status == 401:
-                    return "logged_out"
-                if resp.status == 200:
-                    try:
-                        data = await resp.json()
-                        if data.get("zpData") or data.get("data"):
-                            score += 1
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-        if score >= 2:
-            return "logged_in"
-        if score == 0:
-            return "logged_out"
+        try:
+            body = await page.inner_text("body")
+            if "退出登录" in body:
+                return "logged_in"
+        except Exception:
+            pass
         return "unknown"
 
     async def is_logged_in(self, page) -> bool:
