@@ -1,24 +1,20 @@
 import asyncio
-import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Depends, HTTPException
-from fastapi.templating import Jinja2Templates
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from sqlmodel import Session, select
 
-from .db import init_db, get_session
+from .db import init_db
 from . import db
 from .api import config as config_api, profile as profile_api, tasks as tasks_api, applications as applications_api, chat as chat_api, dashboard as dashboard_api, auth as auth_api
 from .services.browser_session import BrowserSessionManager
-from .services.stats_service import get_today_stats
-from .services.application_service import list_applications
 from .services.chat_service import ChatService
-from .services.config_service import get_config, get_bool
+from .services.config_service import get_config
 from .state import AppState
-from .models import Task, Application, ApplicationEvent, Job, ConfigItem
+from .models import Task
 
 # Agent 组件
 from .agent.prefilter import PreFilter
@@ -36,7 +32,7 @@ from .worker.boss_client import BossClient
 
 logger = logging.getLogger(__name__)
 
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
 def _build_llm() -> LlmClient:
@@ -123,65 +119,6 @@ async def _followup_loop(service: FollowupService) -> None:
         await asyncio.sleep(interval)
 
 
-def _compute_cost_stats(session: Session) -> dict:
-    """汇总所有 ai_tokens_{task_id} 的 token 用量并按 price_per_1k 估算成本。"""
-    total_prompt = 0
-    total_completion = 0
-    per_task = []
-    items = session.exec(
-        select(ConfigItem).where(ConfigItem.key.like("ai_tokens_%"))
-    ).all()
-    for item in items:
-        try:
-            data = json.loads(item.value) if item.value else {}
-        except (json.JSONDecodeError, TypeError):
-            data = {}
-        pt = data.get("prompt_tokens", 0)
-        ct = data.get("completion_tokens", 0)
-        total_prompt += pt
-        total_completion += ct
-        # 从 key 中提取 task_id
-        try:
-            tid = int(item.key.replace("ai_tokens_", ""))
-        except ValueError:
-            tid = None
-        per_task.append({"task_id": tid, "prompt_tokens": pt, "completion_tokens": ct})
-
-    total_tokens = total_prompt + total_completion
-    price_raw = get_config(session, "price_per_1k")
-    try:
-        price_per_1k = float(price_raw) if price_raw is not None else 0.0
-    except (ValueError, TypeError):
-        price_per_1k = 0.0
-    estimated_cost = round(total_tokens / 1000 * price_per_1k, 6)
-
-    return {
-        "total_prompt_tokens": total_prompt,
-        "total_completion_tokens": total_completion,
-        "total_tokens": total_tokens,
-        "price_per_1k": price_per_1k,
-        "estimated_cost": estimated_cost,
-        "per_task": per_task,
-    }
-
-
-def _get_task_application_counts(session: Session, task_ids: list[int]) -> dict[int, dict]:
-    """批量查询每个任务的 application 数量与状态分布。"""
-    result = {tid: {"total": 0, "deliver": 0, "skip": 0, "pending": 0} for tid in task_ids}
-    if not task_ids:
-        return result
-    apps = session.exec(
-        select(Application).where(Application.task_id.in_(task_ids))
-    ).all()
-    for a in apps:
-        d = result.get(a.task_id)
-        if d is not None:
-            d["total"] += 1
-            if a.decision in d:
-                d[a.decision] += 1
-    return result
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -243,201 +180,33 @@ def health():
     return {"status": "ok"}
 
 
-# ---------- 页面 ----------
+# ---------- 静态托管 + SPA fallback ----------
 
-@app.get("/")
-def dashboard(request: Request, session: Session = Depends(get_session)):
-    stats = get_today_stats(session)
-    total = sum(stats.values())
-    today = date.today().isoformat()
-    # 任务列表
-    tasks = session.exec(select(Task).order_by(Task.id.desc())).all()
-    task_ids = [t.id for t in tasks if t.id is not None]
-    app_counts = _get_task_application_counts(session, task_ids)
-    task_list = []
-    for t in tasks:
-        ac = app_counts.get(t.id, {"total": 0, "deliver": 0, "skip": 0, "pending": 0})
-        task_list.append({
-            "id": t.id,
-            "name": t.name,
-            "status": t.status,
-            "mode": t.mode,
-            "last_job_id": t.last_job_id,
-            "created_at": t.created_at,
-            "app_total": ac["total"],
-            "app_deliver": ac["deliver"],
-            "app_skip": ac["skip"],
-        })
-    # 成本统计
-    cost = _compute_cost_stats(session)
-    # chat_enabled
-    chat_enabled = get_bool(session, "chat_enabled", default=True)
-    return templates.TemplateResponse(
-        request, "dashboard.html",
-        {
-            "stats": stats, "total": total, "today": today,
-            "tasks": task_list, "cost": cost, "chat_enabled": chat_enabled,
-        },
-    )
+@app.get("/{path:path}")
+def spa_fallback(path: str):
+    """SPA fallback：非 /api/ 路径统一返回 index.html；带扩展名的静态文件缺失返回 404。"""
+    if path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
 
+    dist = Path(FRONTEND_DIST)
 
-@app.get("/tasks/{task_id}")
-def task_detail(task_id: int, request: Request, session: Session = Depends(get_session)):
-    """任务详情页：SSE 进度流 + 岗位评估列表 + 控制按钮。"""
-    task = session.get(Task, task_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="Task not found")
-    apps = session.exec(
-        select(Application).where(Application.task_id == task_id)
-        .order_by(Application.id.desc()).limit(100)
-    ).all()
-    # 批量查 Job
-    job_ids = {a.job_id for a in apps}
-    jobs = {}
-    if job_ids:
-        for j in session.exec(select(Job).where(Job.id.in_(job_ids))).all():
-            jobs[j.id] = j
-    enriched = []
-    for a in apps:
-        job = jobs.get(a.job_id)
-        enriched.append({
-            "id": a.id,
-            "job_title": job.title if job else "",
-            "company": job.company if job else "",
-            "salary_text": job.salary_text if job else "",
-            "decision": a.decision,
-            "match_score": a.match_score,
-            "status": a.status,
-            "llm_reason": a.llm_reason,
-            "message": a.message,
-        })
-    chat_enabled = get_bool(session, "chat_enabled", default=True)
-    return templates.TemplateResponse(
-        request, "task_detail.html",
-        {"task": task, "applications": enriched, "chat_enabled": chat_enabled},
-    )
+    # 带文件扩展名的路径：尝试从 dist 托管静态文件，缺失则 404
+    if "." in Path(path).name:
+        dist_resolved = dist.resolve()
+        static_file = (dist / path).resolve()
+        try:
+            static_file.relative_to(dist_resolved)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Not found")
+        if static_file.is_file():
+            return FileResponse(static_file)
+        raise HTTPException(status_code=404, detail="Not found")
 
-
-@app.get("/applications")
-def applications_page(
-    request: Request,
-    status: str | None = None,
-    task_id: int | None = None,
-    session: Session = Depends(get_session),
-):
-    """投递记录列表页：筛选（状态/任务）+ 状态分布。"""
-    apps = list_applications(session, task_id=task_id, status=status, limit=200)
-    job_ids = {a.job_id for a in apps}
-    jobs = {}
-    if job_ids:
-        for j in session.exec(select(Job).where(Job.id.in_(job_ids))).all():
-            jobs[j.id] = j
-    enriched = []
-    for a in apps:
-        job = jobs.get(a.job_id)
-        enriched.append({
-            "id": a.id,
-            "job_title": job.title if job else "",
-            "company": job.company if job else "",
-            "salary_text": job.salary_text if job else "",
-            "city": job.city if job else "",
-            "decision": a.decision,
-            "match_score": a.match_score,
-            "status": a.status,
-            "applied_at": a.applied_at,
-            "task_id": a.task_id,
-        })
-    # 状态分布
-    all_apps = session.exec(select(Application)).all()
-    status_dist = {}
-    for a in all_apps:
-        status_dist[a.status] = status_dist.get(a.status, 0) + 1
-    # 任务列表（筛选下拉）
-    tasks = session.exec(select(Task).order_by(Task.id.desc())).all()
-    chat_enabled = get_bool(session, "chat_enabled", default=True)
-    return templates.TemplateResponse(
-        request, "applications.html",
-        {
-            "applications": enriched,
-            "status_dist": status_dist,
-            "tasks": tasks,
-            "current_status": status or "",
-            "current_task": task_id,
-            "chat_enabled": chat_enabled,
-        },
-    )
-
-
-@app.get("/applications/{app_id}")
-def application_detail(app_id: int, request: Request, session: Session = Depends(get_session)):
-    """投递详情页：llm_reason、文案、事件时间线、状态推进。"""
-    app = session.get(Application, app_id)
-    if app is None:
-        raise HTTPException(status_code=404, detail="Application not found")
-    job = session.get(Job, app.job_id)
-    events = session.exec(
-        select(ApplicationEvent)
-        .where(ApplicationEvent.application_id == app_id)
-        .order_by(ApplicationEvent.id)
-    ).all()
-    task = session.get(Task, app.task_id)
-    chat_enabled = get_bool(session, "chat_enabled", default=True)
-    return templates.TemplateResponse(
-        request, "application_detail.html",
-        {
-            "app": app,
-            "job": job,
-            "events": events,
-            "task": task,
-            "chat_enabled": chat_enabled,
-        },
-    )
-
-
-@app.get("/semi-queue")
-def semi_queue(request: Request, session: Session = Depends(get_session)):
-    """半自动投递清单页：渲染 status=pending_manual 的 application 列表。"""
-    apps = list_applications(session, status="pending_manual", limit=200)
-    # 批量查询关联 Job，避免 N+1
-    job_ids = {a.job_id for a in apps}
-    jobs = {}
-    if job_ids:
-        for j in session.exec(select(Job).where(Job.id.in_(job_ids))).all():
-            jobs[j.id] = j
-    enriched = []
-    for a in apps:
-        job = jobs.get(a.job_id)
-        enriched.append({
-            "id": a.id,
-            "job_title": job.title if job else "",
-            "company": job.company if job else "",
-            "salary_text": job.salary_text if job else "",
-            "city": job.city if job else "",
-            "match_score": a.match_score,
-            "message": a.message,
-            "job_url": job.job_url if job else "",
-        })
-    chat_enabled = get_bool(session, "chat_enabled", default=True)
-    return templates.TemplateResponse(
-        request, "semi_queue.html",
-        {"applications": enriched, "chat_enabled": chat_enabled},
-    )
-
-
-@app.get("/chat")
-def chat_page(request: Request, session: Session = Depends(get_session)):
-    """对话式助手页面。"""
-    chat_enabled = get_bool(session, "chat_enabled", default=True)
-    return templates.TemplateResponse(request, "chat.html", {"chat_enabled": chat_enabled})
-
-
-@app.get("/config")
-def config_page(request: Request, session: Session = Depends(get_session)):
-    """配置页面。"""
-    from .services.config_service import get_all_config
-    config = get_all_config(session)
-    chat_enabled = get_bool(session, "chat_enabled", default=True)
-    return templates.TemplateResponse(
-        request, "config.html",
-        {"config": config, "chat_enabled": chat_enabled},
-    )
+    # SPA 路由：返回 index.html，由前端 router 处理
+    index = dist / "index.html"
+    if not index.exists():
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "前端未构建，请先运行: cd efw-ai/frontend && npm install && npm run build"},
+        )
+    return FileResponse(index)
