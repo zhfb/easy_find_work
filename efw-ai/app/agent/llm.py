@@ -1,6 +1,6 @@
 import asyncio
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from openai import APIError, AsyncOpenAI
 
 class LlmUnavailable(Exception): ...
@@ -9,6 +9,7 @@ class LlmUnavailable(Exception): ...
 class LLMResult:
     content: str; prompt_tokens: int = 0; completion_tokens: int = 0
     model: str = ""; fallback: bool = False
+    tool_calls: list = field(default_factory=list)
 
 class CircuitBreaker:
     def __init__(self, name: str, threshold: int = 3, cooldown_seconds: int = 600):
@@ -36,17 +37,33 @@ class LlmClient:
     async def is_available(self) -> bool:
         return self._client is not None and not self.breaker.is_open()
 
-    async def complete(self, messages, temperature=0.5, json_mode=False) -> LLMResult:
+    async def complete(self, messages, temperature=0.5, json_mode=False, tools=None) -> LLMResult:
         if not await self.is_available(): raise LlmUnavailable("llm unavailable")
         try:
             extra = {"response_format": {"type": "json_object"}} if json_mode else {}
+            if tools:
+                extra["tools"] = tools
             resp = await self._client.chat.completions.create(
                 model=self.model, messages=messages, temperature=temperature, **extra)
             self.breaker.record_success()
-            return LLMResult(content=resp.choices[0].message.content,
+            msg = resp.choices[0].message
+            tool_calls = []
+            raw_tc = getattr(msg, "tool_calls", None)
+            if raw_tc:
+                for tc in raw_tc:
+                    tool_calls.append({
+                        "id": getattr(tc, "id", ""),
+                        "type": getattr(tc, "type", "function"),
+                        "function": {
+                            "name": getattr(tc.function, "name", ""),
+                            "arguments": getattr(tc.function, "arguments", "{}"),
+                        },
+                    })
+            return LLMResult(content=msg.content or "",
                              prompt_tokens=getattr(resp.usage, "prompt_tokens", 0),
                              completion_tokens=getattr(resp.usage, "completion_tokens", 0),
-                             model=self.model)
+                             model=self.model,
+                             tool_calls=tool_calls)
         except (APIError, asyncio.TimeoutError):
             self.breaker.record_failure()
             raise
