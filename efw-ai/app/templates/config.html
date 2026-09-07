@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}配置 - EFW-AI{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2 style="margin-bottom:16px;">系统配置</h2>
+  <p style="color:#888;font-size:14px;margin-bottom:16px;">配置项以 key-value 形式存储，修改后即时生效。</p>
+
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <thead>
+        <tr style="border-bottom:2px solid #eee;text-align:left;color:#666;">
+          <th style="padding:10px 8px;">Key</th>
+          <th style="padding:10px 8px;">Value</th>
+          <th style="padding:10px 8px;">更新时间</th>
+          <th style="padding:10px 8px;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for key, value in config.items() %}
+        <tr style="border-bottom:1px solid #f0f0f0;">
+          <td style="padding:10px 8px;font-family:monospace;">{{ key }}</td>
+          <td style="padding:10px 8px;">
+            <input type="text" value="{{ value }}" id="val-{{ loop.index }}"
+              style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;font-family:monospace;">
+          </td>
+          <td style="padding:10px 8px;font-size:12px;color:#888;">-</td>
+          <td style="padding:10px 8px;">
+            <button class="btn btn-sm btn-primary" onclick="saveConfig('{{ key }}', {{ loop.index }}, this)">保存</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 新增配置 -->
+  <div style="margin-top:20px;padding-top:16px;border-top:1px solid #eee;">
+    <h3 style="margin-bottom:10px;font-size:15px;">新增配置项</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <input id="new-key" placeholder="key" style="padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;width:180px;">
+      <input id="new-value" placeholder="value" style="padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;flex:1;min-width:200px;">
+      <button class="btn btn-primary btn-sm" onclick="addConfig(this)">添加</button>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-bottom:10px;font-size:15px;">常用配置说明</h3>
+  <ul style="font-size:13px;color:#666;line-height:2;padding-left:20px;">
+    <li><code>base_url</code> / <code>api_key</code> / <code>model</code>：LLM 接入配置</li>
+    <li><code>follow_up_minutes</code>：跟进循环间隔（分钟），默认 10</li>
+    <li><code>price_per_1k</code>：每千 token 单价（元），用于成本估算，默认 0</li>
+    <li><code>chat_enabled</code>：是否启用对话助手入口，true/false</li>
+    <li><code>ai_tokens_{task_id}</code>：各任务 LLM token 累计用量（自动生成，勿手动修改）</li>
+  </ul>
+</div>
+
+<script>
+async function saveConfig(key, idx, btn) {
+  const value = document.getElementById('val-' + idx).value;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const resp = await fetch('/api/config', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key, value}),
+    });
+    if (resp.ok) showToast('已保存', 'success');
+    else showToast('保存失败', 'error');
+  } catch (e) {
+    showToast('网络错误: ' + e, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '保存';
+  }
+}
+
+async function addConfig(btn) {
+  const key = document.getElementById('new-key').value.trim();
+  const value = document.getElementById('new-value').value.trim();
+  if (!key) { showToast('请输入 key', 'error'); return; }
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const resp = await fetch('/api/config', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key, value}),
+    });
+    if (resp.ok) { showToast('已添加', 'success'); setTimeout(() => location.reload(), 500); }
+    else showToast('添加失败', 'error');
+  } catch (e) {
+    showToast('网络错误: ' + e, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '添加';
+  }
+}
+</script>
+{% endblock %}
