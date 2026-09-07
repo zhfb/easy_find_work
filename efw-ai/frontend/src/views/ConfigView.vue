@@ -51,13 +51,22 @@
   </div>
 
   <div class="card">
-    <h3 style="font-size:15px;margin-bottom:12px;">求职画像</h3>
+    <h3 style="font-size:15px;margin-bottom:12px;">求职画像（这就是 AI 对"你是谁"的全部认知）</h3>
+    <div style="font-size:12px;color:#6B7280;margin-bottom:10px;">
+      技能、经验、意向、薪资、摘要会用于：职位匹配评分（&ge;7 才投递）、生成打招呼自我介绍、面试准备。
+    </div>
     <div style="display:flex;flex-direction:column;gap:10px;">
-      <textarea v-model="profile.skills" placeholder="技能（逗号分隔）" style="padding:8px;border:1px solid #ddd;border-radius:6px;"></textarea>
+      <textarea v-model="profile.skills" placeholder="技能（逗号分隔，如：Linux, Docker, Kubernetes）" style="padding:8px;border:1px solid #ddd;border-radius:6px;"></textarea>
       <input v-model.number="profile.experience_years" placeholder="经验年限" style="padding:8px;border:1px solid #ddd;border-radius:6px;" />
       <input v-model="profile.target_city" placeholder="目标城市" style="padding:8px;border:1px solid #ddd;border-radius:6px;" />
-      <textarea v-model="profile.resume_summary" placeholder="简历摘要" style="padding:8px;border:1px solid #ddd;border-radius:6px;min-height:80px;"></textarea>
+      <input v-model="profile.intention" placeholder="求职意向（如：云原生运维工程师）" style="padding:8px;border:1px solid #ddd;border-radius:6px;" />
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <input v-model.number="profile.expected_salary_min" type="number" placeholder="期望月薪下限 K" style="flex:1 1 140px;padding:8px;border:1px solid #ddd;border-radius:6px;" />
+        <input v-model.number="profile.expected_salary_max" type="number" placeholder="期望月薪上限 K" style="flex:1 1 140px;padding:8px;border:1px solid #ddd;border-radius:6px;" />
+      </div>
+      <textarea v-model="profile.resume_summary" placeholder="简历摘要（教育/经历/项目亮点，越具体 AI 打招呼越像你本人）" style="padding:8px;border:1px solid #ddd;border-radius:6px;min-height:100px;"></textarea>
       <button class="btn" @click="saveProfile">保存画像</button>
+      <span v-if="profileSaved" style="color:#389E0D;font-size:12px;">已保存，AI 后续评分和消息生成都会用这份画像</span>
     </div>
   </div>
 </template>
@@ -72,6 +81,7 @@ const profile = ref({})
 const tasks = ref([])
 const taskOk = ref('')
 const taskError = ref('')
+const profileSaved = ref('')
 const taskForm = ref({ name: '', direction: '', extraKeywords: '', city: '',
   mode: 'auto', dailyLimit: 20, maxDeliveries: 50, matchThreshold: 7.0, salaryMin: null })
 
@@ -84,7 +94,12 @@ async function load() {
   try { tasks.value = (await get('/api/tasks')).tasks || [] } catch (e) { tasks.value = [] }
 }
 function save(key, value) { put('/api/config', { key, value }).then(load).catch(e => alert('保存失败: ' + e.message)) }
-function saveProfile() { put('/api/profile', profile.value).then(load).catch(e => alert('保存失败: ' + e.message)) }
+function saveProfile() {
+  profileSaved.value = ''
+  put('/api/profile', profile.value)
+    .then(() => { profileSaved.value = '已保存，AI 后续评分和消息生成都会用这份画像' })
+    .catch(e => alert('保存失败: ' + e.message))
+}
 
 async function createTask() {
   taskOk.value = ''; taskError.value = ''
