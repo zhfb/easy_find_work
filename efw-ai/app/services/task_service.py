@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 from sqlmodel import Session, select
 
-from app.models import Task, Job, Application, Profile, Blacklist
+from app.models import Task, Job, Application, ApplicationEvent, Profile, Blacklist
 from app.services.profile_service import get_profile
 
 logger = logging.getLogger(__name__)
@@ -24,12 +24,16 @@ class TaskService:
       - 通过 SseBroker 广播进度事件
     """
 
-    def __init__(self, orchestrator, session_factory, app_state):
+    def __init__(self, orchestrator, session_factory, app_state,
+                 browser_manager=None, boss_client=None):
         self.orchestrator = orchestrator
         self.session_factory = session_factory
         if app_state is None:
             raise RuntimeError("TaskService requires app_state to be injected")
         self._state = app_state
+        # 投递执行依赖：可注入，便于测试；为 None 时跳过投递不崩溃
+        self.browser_manager = browser_manager
+        self.boss_client = boss_client
 
     # ---------- 状态控制 ----------
 
@@ -59,6 +63,62 @@ class TaskService:
     def resume_after_crash(self, task_id: int) -> None:
         """崩溃恢复：interrupted → running，并重置 flag。"""
         self._update_status(task_id, "running", "running")
+
+    # ---------- 投递执行 ----------
+
+    async def _do_delivery(self, app: Application, job_dict: dict) -> None:
+        """对 auto 模式 deliver 决策的岗位执行 Boss 打招呼投递。
+
+        - 调用 BossClient.send_greeting(page, boss_job_id, message)
+        - 失败时记 event("deliver_failed") 并重试 1 次
+        - 成功时 status=applied + event("delivered")
+        - browser_manager / boss_client 未注入或 get_page 失败时跳过（不崩溃）
+        """
+        if self.boss_client is None or self.browser_manager is None:
+            logger.info("Delivery skipped for app %s: boss_client/browser_manager not configured", app.id)
+            return
+
+        try:
+            page = self.browser_manager.get_page()
+        except Exception as e:
+            logger.warning("Delivery skipped for app %s: cannot get browser page: %s", app.id, e)
+            return
+
+        boss_job_id = job_dict.get("boss_job_id", "") if isinstance(job_dict, dict) else ""
+        if not boss_job_id:
+            logger.warning("Delivery skipped for app %s: missing boss_job_id", app.id)
+            return
+
+        for attempt in range(2):  # 最多 2 次（1 次重试）
+            try:
+                await self.boss_client.send_greeting(page, boss_job_id, app.message)
+                # 成功：更新状态 + delivered 事件
+                with self.session_factory() as session:
+                    a = session.get(Application, app.id)
+                    if a is not None:
+                        a.status = "applied"
+                        if a.applied_at is None:
+                            a.applied_at = _now()
+                        a.updated_at = _now()
+                        session.add(ApplicationEvent(
+                            application_id=app.id,
+                            event_type="delivered",
+                            detail=f"attempt={attempt + 1}",
+                        ))
+                        session.commit()
+                logger.info("Delivery succeeded for app %s (attempt %d)", app.id, attempt + 1)
+                return
+            except Exception as e:
+                logger.warning("send_greeting attempt %d failed for app %s: %s", attempt + 1, app.id, e)
+                with self.session_factory() as session:
+                    session.add(ApplicationEvent(
+                        application_id=app.id,
+                        event_type="deliver_failed",
+                        detail=str(e)[:200],
+                    ))
+                    session.commit()
+
+        logger.error("Delivery failed after retry for app %s", app.id)
 
     # ---------- 主循环 ----------
 
@@ -165,6 +225,10 @@ class TaskService:
                 app = await self.orchestrator.process_job(
                     task, job_dict, profile, blacklist_companies, daily_used,
                 )
+
+                # 4.5 自动投递：仅 auto 模式 + deliver 决策时调用 BossClient.send_greeting
+                if task.mode == "auto" and app.decision == "deliver":
+                    await self._do_delivery(app, job_dict)
 
                 # 5. 更新游标
                 with self.session_factory() as session:

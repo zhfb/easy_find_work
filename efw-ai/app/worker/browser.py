@@ -75,6 +75,19 @@ class BrowserManager:
             raise RuntimeError("BrowserManager not started; call start() first")
         return await self._context.new_page()
 
+    def get_page(self):
+        """返回当前上下文中的第一个页面；未启动或无页面时抛 RuntimeError。
+
+        同步方法：Playwright context.pages 是同步属性，无需 await。
+        调用方应在 try/except 中包裹，浏览器不可用时跳过投递而非崩溃。
+        """
+        if self._context is None:
+            raise RuntimeError("BrowserManager not started; call start() first")
+        pages = self._context.pages
+        if not pages:
+            raise RuntimeError("No page available in browser context")
+        return pages[0]
+
     # ------------------------------------------------------------------
     # 登录态 / 心跳
     # ------------------------------------------------------------------
