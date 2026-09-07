@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}半自动投递清单 - EFW-AI{% endblock %}
+{% block content %}
+<div class="card">
+  <h2 style="margin-bottom:8px;">半自动投递清单</h2>
+  <p style="color:#888;font-size:14px;margin-bottom:16px;">
+    以下岗位由 AI 判定为值得投递，请人工确认后手动打招呼。共 {{ applications|length }} 条待处理。
+  </p>
+
+  {% if applications %}
+  <div id="app-list">
+    {% for app in applications %}
+    <div class="card" id="app-{{ app.id }}" style="margin-bottom:12px;border-left:4px solid #f59e0b;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div>
+          <h3 style="font-size:16px;margin-bottom:4px;">
+            {{ app.job_title or '未知岗位' }}
+            <span style="color:#888;font-weight:400;font-size:14px;">@ {{ app.company or '未知公司' }}</span>
+          </h3>
+          <p style="color:#666;font-size:13px;margin-bottom:8px;">
+            {% if app.salary_text %}{{ app.salary_text }} · {% endif %}
+            {% if app.city %}{{ app.city }} · {% endif %}
+            匹配分 {{ app.match_score or '-' }}
+          </p>
+        </div>
+        <span style="background:#fef3c7;color:#92400e;padding:2px 10px;border-radius:12px;font-size:12px;">
+          待手动投递
+        </span>
+      </div>
+
+      <div style="background:#f9fafb;border-radius:6px;padding:12px;margin-bottom:12px;">
+        <p style="font-size:14px;line-height:1.6;color:#333;white-space:pre-wrap;" id="msg-{{ app.id }}">{{ app.message or '(无文案)' }}</p>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button onclick="copyMessage({{ app.id }})"
+          style="padding:6px 16px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;">
+          复制文案
+        </button>
+        {% if app.job_url %}
+        <a href="{{ app.job_url }}" target="_blank"
+          style="padding:6px 16px;border:1px solid #3b82f6;border-radius:6px;background:#eff6ff;color:#1d4ed8;text-decoration:none;font-size:13px;display:inline-block;">
+          去投递
+        </a>
+        {% endif %}
+        <button onclick="markApplied({{ app.id }})"
+          style="padding:6px 16px;border:none;border-radius:6px;background:#10b981;color:#fff;cursor:pointer;font-size:13px;">
+          标记已投递
+        </button>
+        <button onclick="regenerateMsg({{ app.id }}, this)"
+          style="padding:6px 16px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;color:#6b7280;">
+          重新生成
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div style="text-align:center;padding:40px 0;color:#9ca3af;">
+    <p style="font-size:16px;">暂无待手动投递的岗位</p>
+    <p style="font-size:13px;margin-top:8px;">运行半自动任务后，AI 筛选出的岗位会出现在这里</p>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+function copyMessage(appId) {
+  const text = document.getElementById('msg-' + appId).innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    alert('文案已复制到剪贴板');
+  }).catch(() => {
+    // 降级：选中文本
+    const range = document.createRange();
+    range.selectNodeContents(document.getElementById('msg-' + appId));
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    document.execCommand('copy');
+    alert('文案已复制');
+  });
+}
+
+async function markApplied(appId) {
+  if (!confirm('确认已完成投递？')) return;
+  try {
+    const resp = await fetch('/api/applications/' + appId + '/status', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({status: 'applied', detail: '半自动清单手动标记已投递'})
+    });
+    if (resp.ok) {
+      const card = document.getElementById('app-' + appId);
+      card.style.opacity = '0.4';
+      card.style.borderLeftColor = '#10b981';
+      card.querySelector('span').textContent = '已投递';
+      card.querySelector('span').style.background = '#d1fae5';
+      card.querySelector('span').style.color = '#065f46';
+    } else {
+      alert('标记失败：' + (await resp.json()).detail);
+    }
+  } catch (e) {
+    alert('网络错误：' + e);
+  }
+}
+
+async function regenerateMsg(appId, btn) {
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  try {
+    const resp = await fetch('/api/applications/' + appId + '/regenerate-message', {method: 'POST'});
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.messages && data.messages.length > 0) {
+        document.getElementById('msg-' + appId).textContent = data.messages[0];
+      }
+    } else {
+      alert('生成失败');
+    }
+  } catch (e) {
+    alert('网络错误：' + e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '重新生成';
+  }
+}
+</script>
+{% endblock %}
