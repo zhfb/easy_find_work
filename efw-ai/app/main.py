@@ -7,21 +7,69 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session
 
 from .db import init_db, get_session
-from .api import config as config_api, profile as profile_api
+from . import db
+from .api import config as config_api, profile as profile_api, tasks as tasks_api
 from .services.stats_service import get_today_stats
+from .state import AppState
+
+# Agent 组件
+from .agent.prefilter import PreFilter
+from .agent.jd_parser import JdParser
+from .agent.matcher import Matcher
+from .agent.decider import Decider
+from .agent.writer import Writer
+from .agent.llm import LlmClient
+from .agent.orchestrator import Orchestrator
+from .services.task_service import TaskService
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+def _build_llm() -> LlmClient:
+    """从 config 表读取 LLM 配置，构造 LlmClient（无配置时返回不可用实例，Agent 自动回退规则）。"""
+    from .services.config_service import get_config
+    with Session(db.engine) as session:
+        base_url = get_config(session, "base_url") or ""
+        api_key = get_config(session, "api_key") or ""
+        model = get_config(session, "model") or ""
+    return LlmClient(base_url=base_url, api_key=api_key, model=model)
+
+
+def _build_orchestrator() -> Orchestrator:
+    llm = _build_llm()
+    return Orchestrator(
+        prefilter=PreFilter(),
+        jd_parser=JdParser(llm),
+        matcher=Matcher(llm),
+        decider=Decider(),
+        writer=Writer(llm),
+        session_factory=lambda: Session(db.engine),
+    )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # 初始化应用状态
+    app_state = AppState()
+    app.state.sse_broker = app_state.sse_broker
+    app.state.task_flags = app_state.task_flags
+    app.state.running_tasks = app_state.running_tasks
+    # 构造 Orchestrator + TaskService
+    orchestrator = _build_orchestrator()
+    app.state.orchestrator = orchestrator
+    app.state.task_service = TaskService(
+        orchestrator=orchestrator,
+        session_factory=lambda: Session(db.engine),
+        app_state=app_state,
+    )
     yield
 
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(config_api.router, prefix="/api")
 app.include_router(profile_api.router, prefix="/api")
+app.include_router(tasks_api.router, prefix="/api")
 
 
 @app.get("/")
