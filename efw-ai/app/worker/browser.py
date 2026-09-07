@@ -37,7 +37,11 @@ class BrowserManager:
     # 生命周期
     # ------------------------------------------------------------------
     async def start(self) -> None:
-        """启动 Playwright 与 chromium 持久化上下文（headless=False 便于人工登录）。"""
+        """启动 Playwright 与 chromium 持久化上下文（headless=False 便于人工登录）。
+
+        反检测：隐藏自动化特征（navigator.webdriver / --enable-automation），
+        降低 BOSS 直聘风控触发概率（登录成功后疯狂刷新/验证码循环的根因之一）。
+        """
         try:
             from playwright.async_api import async_playwright
 
@@ -46,6 +50,11 @@ class BrowserManager:
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=str(self.user_data_dir),
                 headless=False,
+                args=["--disable-blink-features=AutomationControlled"],
+                ignore_default_args=["--enable-automation"],
+            )
+            await self._context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
             )
             logger.info("BrowserManager started, profile=%s", self.user_data_dir)
         except Exception:
