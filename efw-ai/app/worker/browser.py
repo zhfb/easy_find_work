@@ -19,6 +19,7 @@ from app.models import Cookie
 logger = logging.getLogger(__name__)
 
 LOGIN_CHECK_URL = "https://www.zhipin.com/web/user/?ka=header-login"
+LOGIN_COOKIE_NAMES = ("wt2", "__zp_stoken__", "last_login_phone")
 
 
 class BrowserManager:
@@ -30,6 +31,7 @@ class BrowserManager:
         self.session = session
         self._playwright = None
         self._context = None
+        self.auth_probe_url = ""
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -91,24 +93,52 @@ class BrowserManager:
     # ------------------------------------------------------------------
     # 登录态 / 心跳
     # ------------------------------------------------------------------
-    async def is_logged_in(self, page) -> bool:
-        """访问用户中心，判断是否已登录（未登录会跳转登录页或出现登录按钮）。"""
+    async def login_status(self, page) -> str:
+        """Four-signal login判定: A 强否定; B DOM / C cookie / D 接口 加权 >=2 已登录."""
         try:
             await page.goto(LOGIN_CHECK_URL, wait_until="domcontentloaded", timeout=15000)
-            url = page.url
-            # 仅检测明确的登录页跳转（passport 域名或 /login 路径），
-            # 不能用裸子串 "login"，否则会误匹配检查 URL 自身的 ?ka=header-login 参数
-            parsed = urlparse(url)
-            if "passport" in parsed.netloc or parsed.path.startswith("/login"):
-                return False
-            # 已登录页面会出现头像/昵称等元素；未登录会出现"登录"按钮
-            body_text = await page.inner_text("body")
-            if "登录" in body_text and "退出" not in body_text:
-                return False
-            return True
         except Exception:
-            logger.exception("is_logged_in check failed")
-            return False
+            logger.exception("login_status goto failed")
+            return "unknown"
+        parsed = urlparse(page.url)
+        if "passport" in parsed.netloc or parsed.path.startswith("/login"):
+            return "logged_out"
+        score = 0
+        try:
+            body = await page.inner_text("body")
+            if "退出登录" in body:
+                score += 1
+        except Exception:
+            pass
+        try:
+            cookies = await page.context.cookies()
+            names = {c["name"] for c in cookies}
+            if names & set(LOGIN_COOKIE_NAMES):
+                score += 1
+        except Exception:
+            pass
+        if self.auth_probe_url:
+            try:
+                resp = await page.request.get(self.auth_probe_url, timeout=8000)
+                if resp.status == 401:
+                    return "logged_out"
+                if resp.status == 200:
+                    try:
+                        data = await resp.json()
+                        if data.get("zpData") or data.get("data"):
+                            score += 1
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if score >= 2:
+            return "logged_in"
+        if score == 0:
+            return "logged_out"
+        return "unknown"
+
+    async def is_logged_in(self, page) -> bool:
+        return await self.login_status(page) == "logged_in"
 
     async def heartbeat(self, page) -> bool:
         """轻量心跳：访问首页判断页面是否可正常加载。"""
