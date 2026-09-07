@@ -11,7 +11,8 @@ from sqlmodel import Session, select
 
 from .db import init_db, get_session
 from . import db
-from .api import config as config_api, profile as profile_api, tasks as tasks_api, applications as applications_api, chat as chat_api, dashboard as dashboard_api
+from .api import config as config_api, profile as profile_api, tasks as tasks_api, applications as applications_api, chat as chat_api, dashboard as dashboard_api, auth as auth_api
+from .services.browser_session import BrowserSessionManager
 from .services.stats_service import get_today_stats
 from .services.application_service import list_applications
 from .services.chat_service import ChatService
@@ -191,6 +192,8 @@ async def lifespan(app: FastAPI):
     app.state.sse_broker = app_state.sse_broker
     app.state.task_flags = app_state.task_flags
     app.state.running_tasks = app_state.running_tasks
+    # 初始化浏览器登录会话管理器
+    app.state.browser_session = BrowserSessionManager()
     # 构造 Orchestrator + TaskService
     orchestrator = _build_orchestrator()
     app.state.orchestrator = orchestrator
@@ -220,6 +223,7 @@ async def lifespan(app: FastAPI):
             await followup_task
         except (asyncio.CancelledError, Exception):
             pass
+        await app.state.browser_session.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -229,6 +233,7 @@ app.include_router(tasks_api.router, prefix="/api")
 app.include_router(applications_api.router, prefix="/api")
 app.include_router(chat_api.router, prefix="/api")
 app.include_router(dashboard_api.router, prefix="/api")
+app.include_router(auth_api.router, prefix="/api")
 
 
 # ---------- 健康检查 ----------
