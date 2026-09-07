@@ -1,9 +1,9 @@
 <template>
   <div class="timeline">
     <div v-for="(ev, i) in events" :key="i" class="item">
-      <div class="dot" :class="ev.type || 'info'"></div>
+      <div class="dot" :class="ev.event_type || 'info'"></div>
       <div class="content">
-        <div class="msg">{{ ev.message || ev.msg || ev.text }}</div>
+        <div class="msg">{{ ev.detail || ev.message || ev.msg || ev.text }}</div>
         <div class="time">{{ ev.time || ev.created_at || '' }}</div>
       </div>
     </div>
