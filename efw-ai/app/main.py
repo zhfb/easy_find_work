@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from .db import init_db, get_session
 from . import db
-from .api import config as config_api, profile as profile_api, tasks as tasks_api, applications as applications_api, chat as chat_api
+from .api import config as config_api, profile as profile_api, tasks as tasks_api, applications as applications_api, chat as chat_api, dashboard as dashboard_api
 from .services.stats_service import get_today_stats
 from .services.application_service import list_applications
 from .services.chat_service import ChatService
@@ -228,6 +228,7 @@ app.include_router(profile_api.router, prefix="/api")
 app.include_router(tasks_api.router, prefix="/api")
 app.include_router(applications_api.router, prefix="/api")
 app.include_router(chat_api.router, prefix="/api")
+app.include_router(dashboard_api.router, prefix="/api")
 
 
 # ---------- 健康检查 ----------
