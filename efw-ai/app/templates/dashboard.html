@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}看板 - EFW-AI{% endblock %}
+{% block content %}
+<div class="card">
+  <h2 style="margin-bottom:12px;">今日投递统计（{{ today }}）</h2>
+  <p style="font-size:28px;font-weight:700;color:#1a1a2e;">{{ total }} <span style="font-size:14px;font-weight:400;color:#888;">条投递</span></p>
+</div>
+<div class="card">
+  <h3 style="margin-bottom:12px;">按状态分布</h3>
+  {% if stats %}
+  <ul style="list-style:none;">
+    {% for status, count in stats.items() %}
+    <li style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee;">
+      <span>{{ status }}</span><span style="font-weight:600;">{{ count }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p style="color:#888;">今日暂无投递记录</p>
+  {% endif %}
+</div>
+{% endblock %}
