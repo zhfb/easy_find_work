@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { get, post } from '../src/api/client.js'
+import { get, post, put } from '../src/api/client.js'
 
 function mockFetch(status, body, contentType = 'application/json') {
   global.fetch = vi.fn().mockResolvedValue({
@@ -33,5 +33,13 @@ describe('api client', () => {
     const [, opts] = global.fetch.mock.calls[0]
     expect(opts.method).toBe('POST')
     expect(opts.body).toBe('{}')
+  })
+
+  it('put 携带 JSON body', async () => {
+    mockFetch(200, { ok: true })
+    await put('/api/config', { key: 'x', value: 'y' })
+    const [, opts] = global.fetch.mock.calls[0]
+    expect(opts.method).toBe('PUT')
+    expect(opts.body).toBe('{"key":"x","value":"y"}')
   })
 })

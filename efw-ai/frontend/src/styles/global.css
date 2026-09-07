@@ -11,4 +11,21 @@ nav a { color: #ccc; text-decoration: none; padding: 8px 14px; border-radius: 6p
 nav a.router-link-active { background: rgba(255,255,255,0.15); color: #fff; }
 main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+.muted { color: var(--muted); }
+.btn { display: inline-block; padding: 6px 14px; font-size: 13px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: #333; cursor: pointer; text-decoration: none; }
+.btn:hover { background: #f3f4f6; }
+.btn.ok { background: var(--success); border-color: var(--success); color: #fff; }
+.btn.ok:hover { background: #059669; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.danger:hover { background: #dc2626; }
+.btn:disabled { background: #e5e7eb; border-color: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
+.badge { display: inline-block; padding: 2px 8px; font-size: 11px; border-radius: 10px; background: #e5e7eb; color: #4b5563; }
+.badge.st-applied { background: #d1fae5; color: #065f46; }
+.badge.st-responded { background: #dbeafe; color: #1e40af; }
+.badge.st-interview { background: #fef3c7; color: #92400e; }
+.badge.st-offer { background: #ede9fe; color: #5b21b6; }
+.badge.st-rejected { background: #fee2e2; color: #991b1b; }
+.badge.st-withdrawn { background: #f3f4f6; color: #6b7280; }
+.badge.st-skip { background: #f3f4f6; color: #6b7280; }
+.badge.st-pending_manual { background: #fef3c7; color: #92400e; }
 @media (max-width: 640px) { header.app-header .inner { flex-direction: column; align-items: flex-start; } nav { width: 100%; overflow-x: auto; } }

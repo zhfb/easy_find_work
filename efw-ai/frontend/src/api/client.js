@@ -18,3 +18,5 @@ async function request(url, options = {}) {
 export const get = (url) => request(url)
 export const post = (url, body) =>
   request(url, { method: 'POST', body: body ? JSON.stringify(body) : undefined })
+export const put = (url, body) =>
+  request(url, { method: 'PUT', body: JSON.stringify(body) })
